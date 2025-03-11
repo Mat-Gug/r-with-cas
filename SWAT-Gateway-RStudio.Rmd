@@ -1,0 +1,170 @@
+---
+title: "SAS Viya & R: SWAT package and Gateway Action Set"
+output: html_document
+date: "2025-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# SAS Viya & R - SWAT package and Gateway Action Set in R Studio
+
+## Option 1 - SWAT in R Studio (no Gateway)
+
+### Load Required Libraries
+
+```{r}
+library(swat)
+library(dplyr)
+```
+
+### Establish Connection to CAS
+
+```{r}
+conn <- swat::CAS('https://extviya4.emea.sas.com/cas-shared-default-http')
+```
+### Get Information on Available CAS Libraries and Tables
+
+```{r}
+cas.table.caslibInfo(conn)
+```
+
+```{r}
+# See the files contained in the active CASLib
+cas.table.fileInfo(conn)$FileInfo
+```
+
+```{r}
+# See the tables already loaded into memory:
+cas.table.tableInfo(conn)$TableInfo
+```
+
+### Check if Table Exists and Load Data if Needed
+
+```{r}
+results <- cas.table.tableExists(
+  conn,
+  name="price_data"
+)
+results$exists
+```
+
+```{r}
+if (results$exists) {
+  print("The table already exists.")
+} else {
+  print("The table doesn't exists yet.")
+  print("Loading the table into memory...")
+  # Load data from server-side file
+  cas.table.loadTable(
+    conn,
+    path = 'PRICE_DATA_RAW.sashdat',
+    casOut = list(
+      name = "price_data"
+    )
+  )
+  print("Done!")
+}
+
+print("Creating a CASTable object to reference it...")
+casTbl <- defCasTable(
+  conn,
+  'price_data'
+)
+print("Done!")
+
+# Display first rows of the CAS Table
+head(casTbl)
+```
+
+```{r}
+# Get dimension of the Table
+dim(casTbl)
+```
+
+### Downloading data from CAS Table
+
+To do that, several options are available:
+- Use `cas.table.fetch()` to fetch rows from a CAS Table, by setting the `to` (ordinal position of the last row to return, 20 by default) and `maxRows` (maximum number of rows to return, 1000 by default) parameters to a number greater than or equal to the number of your table's rows to download it everything.
+- Convert the CAS Table to a CAS/R Data Frame. More specifically, `to.casDataFrame()` and `to.r.data.frame()` download the in-memory table that is referenced by the `CASTable` object and store it as a casDataFrame or a data.frame in R. As before, the value of the `obs` parameter (number of rows to download, 32768 by default) must be properly set to download the entire table from CAS.
+- Download the in-memory table from the CAS server and save it as a CSV file that is accessible to the client, using the `cas.write.csv()` function. In this case, there is no way to increase the number of rows to download and write to the client-side CSV file. By default, the downloaded observations will be at most 32768. Anyway, you can first use one of the two options above and then save the entire table to a CSV file, if needed.
+
+Let's directly convert the CAS Table to a R Data Frame, to further process it using pure R packages and functions.
+
+```{r}
+# Convert CAS Table to R Data Frame
+tbl <- to.r.data.frame(casTbl, obs = 193500)
+
+print('R data.frame dimension:')
+print(paste('- Number of rows:', nrow(tbl)))
+print(paste('- Number of columns:', ncol(tbl)))
+```
+
+### Data Pre-Processing
+
+```{r}
+print(paste('price_date column type before conversion:', class(tbl$price_date)))
+
+# Convert date column to proper format
+tbl$price_date <- as.Date(tbl$price_date)
+print(paste('price_date column type after conversion:', class(tbl$price_date)))
+```
+
+```{r}
+# Compute minimum and maximum dates
+min_date <- min(tbl$price_date, na.rm = TRUE)
+max_date <- max(tbl$price_date, na.rm = TRUE)
+print(paste('Min Date:', min_date))
+print(paste('Max Date:', max_date))
+```
+
+As you can see, the data set contains rows with dates going from January to December 2015. As an example, let's filter the data by selecting only rows from the second half of the year.
+
+```{r}
+filter_date <- as.Date("2015-06-01")
+
+processedTbl <- tbl %>%
+  filter(price_date > filter_date)
+
+min_date <- min(processedTbl$price_date, na.rm = TRUE)
+max_date <- max(processedTbl$price_date, na.rm = TRUE)
+print(paste('Min Date:', min_date))
+print(paste('Max Date:', max_date))
+```
+
+```{r}
+# Display first rows of processed data
+head(processedTbl)
+```
+
+### Saving the processed table to CAS
+
+Once pre-processing is complete, upload the R data frame back to CAS using `as.casTable()`.
+
+```{r}
+processedCasTbl <- as.casTable(
+  conn,
+  processedTbl,
+  casOut = list(
+    name = "price_data_new",
+    replace = TRUE
+  )
+)
+```
+
+We can verify that the CAS table was successfully created by using `cas.table.tableInfo()`, as we did at the beginning:
+
+```{r}
+cas.table.tableInfo(conn)$TableInfo
+```
+
+### Terminate CAS Connection
+
+```{r}
+cas.terminate(conn)
+```
+
+## Option 2 - SWAT+Gateway Action Set in R Studio
+
+
