@@ -159,12 +159,163 @@ We can verify that the CAS table was successfully created by using `cas.table.ta
 cas.table.tableInfo(conn)$TableInfo
 ```
 
-### Terminate CAS Connection
+### Drop the processed CAS table and terminate CAS Connection
 
 ```{r}
+cas.table.dropTable(
+  conn,
+  name = "price_data_new",
+  quiet = TRUE
+)
+
 cas.terminate(conn)
 ```
 
 ## Option 2 - SWAT+Gateway Action Set in R Studio
 
+### Load Required Libraries
+
+```{r}
+library(swat)
+```
+
+### Establish Connection to CAS
+
+```{r}
+conn <- swat::CAS('https://extviya4.emea.sas.com/cas-shared-default-http')
+```
+
+### Load Gateway Action Set
+
+```{r}
+loadActionSet(conn, "gateway")
+```
+
+### Check if Table Exists and Load Data if Needed
+
+```{r}
+results <- cas.table.tableExists(
+  conn,
+  name="price_data"
+)
+results$exists
+```
+
+```{r}
+if (results$exists) {
+  print("The table already exists.")
+} else {
+  print("The table doesn't exists yet.")
+  print("Loading the table into memory...")
+  # Load data from server-side file
+  cas.table.loadTable(
+    conn,
+    path = 'PRICE_DATA_RAW.sashdat',
+    casOut = list(
+      name = "price_data"
+    )
+  )
+  print("Done!")
+}
+
+print("Creating a CASTable object to reference it...")
+casTbl <- defCasTable(
+  conn,
+  'price_data'
+)
+print("Done!")
+
+# Display first rows of the CAS Table
+head(casTbl)
+```
+
+```{r}
+# Get dimension of the Table
+dim(casTbl)
+```
+
+### Submit R code to the CAS server
+
+```{r}
+code <- 
+"# Read the CAS table
+tbl <- gateway::read_table(list(name = 'price_data', caslib = 'casuser'))
+
+# Compute dimension per thread
+info <- dim(tbl)
+print(paste('Thread', gw$thread_id, ':', 
+		'Number of rows:', info[1] , 
+		'Number of columns:', info[2]))
+
+# Check the column types
+column_type <- class(tbl$price_date)
+print(paste('Thread', gw$thread_id, ':',
+		'price_date column type:', column_type))
+
+# Ensure `price_date` is recognized as a Date type
+if (!inherits(tbl$price_date, 'Date')) {
+  tbl$price_date <- as.Date(tbl$price_date)  # Convert if needed
+}
+
+print(paste('Is date?', inherits(tbl$price_date, 'Date')))
+
+# Compute minimum and maximum dates per thread
+local_min_date <- min(tbl$price_date, na.rm = TRUE)
+local_max_date <- max(tbl$price_date, na.rm = TRUE)
+print(paste('Thread', gw$thread_id, 'Min Date:', local_min_date))
+print(paste('Thread', gw$thread_id, 'Max Date:', local_max_date))
+
+# Define filter condition
+filter_date <- as.Date('2015-06-01')
+filtered_tbl <- tbl[tbl$price_date > filter_date, ]
+
+# Compute dimension per thread after filtering
+info <- dim(filtered_tbl)
+print(paste('Thread', gw$thread_id, ':', 
+		'Number of rows:', info[1] , 
+		'Number of columns:', info[2]))
+
+# Compute the minimum date per thread
+local_min_date <- min(filtered_tbl$price_date, na.rm = TRUE)
+local_max_date <- max(filtered_tbl$price_date, na.rm = TRUE)
+print(paste('Thread', gw$thread_id, 'Min Date:', local_min_date))
+print(paste('Thread', gw$thread_id, 'Max Date:', local_max_date))
+
+# Save the filtered table to CAS
+gateway::write_table(filtered_tbl, list(name = 'price_data_new',
+										caslib = 'casuser',
+										promote = TRUE))"
+
+result <- cas.gateway.runLang(
+  con, 
+  lang="r",
+  code=code2,
+  nthreads = 3
+)
+result
+```
+
+As before, let's check whether the CAS table was successfully created:
+
+```{r}
+cas.table.tableInfo(conn)$TableInfo
+```
+
+### Drop the CAS tables and terminate CAS Connection
+
+```{r}
+cas.table.dropTable(
+  conn,
+  name = "price_data",
+  quiet = TRUE
+)
+
+cas.table.dropTable(
+  conn,
+  name = "price_data_new",
+  quiet = TRUE
+)
+
+cas.terminate(conn)
+```
 
